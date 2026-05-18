@@ -1,0 +1,174 @@
+{
+  "name": "ascet-copilot",
+  "displayName": "ASCET Copilot",
+  "description": "AI-powered assistant for ASCET projects",
+  "version": "0.2.0",
+  "publisher": "ascet-copilot",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ascet-copilot/ascet-copilot"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other", "AI"],
+
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+
+  "contributes": {
+
+    "chatParticipants": [
+      {
+        "id": "ascet",
+        "name": "ascet",
+        "fullName": "ASCET Copilot",
+        "description": "Hỏi về class, calc code và block diagram trong ASCET Database",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "analyze",
+            "description": "Phân tích calc code của một ASCET class"
+          },
+          {
+            "name": "list",
+            "description": "Liệt kê toàn bộ class trong database"
+          },
+          {
+            "name": "diagram",
+            "description": "Đọc và mô tả block diagram của một class"
+          }
+        ]
+      }
+    ],
+
+    "commands": [
+      {
+        "command": "ascet.refresh",
+        "title": "ASCET: Refresh Class List",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ascet.selectAndChat",
+        "title": "ASCET: Search & Analyze Class",
+        "icon": "$(search)"
+      },
+      {
+        "command": "ascet.analyzeSelected",
+        "title": "ASCET: Analyze This Class",
+        "icon": "$(play)"
+      },
+      {
+        "command": "ascet.askCopilot",
+        "title": "Ask ASCET Copilot",
+        "icon": "$(copilot)"
+      },
+      {
+        "command": "ascet.openLog",
+        "title": "ASCET: Show Log Panel",
+        "icon": "$(output)"
+      }
+    ],
+
+    "menus": {
+      "view/title": [
+        {
+          "command": "ascet.refresh",
+          "when": "view == myAscetTreeView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ascet.selectAndChat",
+          "when": "view == myAscetTreeView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "ascet.openLog",
+          "when": "view == myAscetTreeView",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ascet.analyzeSelected",
+          "when": "view == myAscetTreeView && viewItem == ascetClass",
+          "group": "ascet@1"
+        },
+        {
+          "command": "ascet.askCopilot",
+          "when": "view == myAscetTreeView && viewItem == ascetClass",
+          "group": "ascet@2"
+        }
+      ],
+      "commandPalette": [
+        { "command": "ascet.refresh" },
+        { "command": "ascet.selectAndChat" },
+        { "command": "ascet.openLog" },
+        { "command": "ascet.analyzeSelected", "when": "false" },
+        { "command": "ascet.askCopilot",      "when": "false" }
+      ]
+    },
+
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ascetContainer",
+          "title": "ASCET Copilot",
+          "icon": "$(circuit-board)"
+        }
+      ]
+    },
+
+    "views": {
+      "ascetContainer": [
+        {
+          "id": "myAscetTreeView",
+          "name": "ASCET Classes",
+          "icon": "$(database)",
+          "contextualTitle": "ASCET Database"
+        }
+      ]
+    },
+
+    "configuration": {
+      "title": "ASCET Copilot",
+      "properties": {
+        "ascetCopilot.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "Path to the Python executable (e.g. C:\\miniconda3\\envs\\py39_env\\python.exe)."
+        },
+        "ascetCopilot.ascetVersion": {
+          "type": "string",
+          "default": "auto",
+          "description": "ASCET COM version string, e.g. 6.1.5. Use \"auto\" to auto-detect."
+        },
+        "ascetCopilot.cliBinPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to `ascet_cli.exe`. Leave **empty** to use the bundled `bin/ascet_cli.exe` shipped with this extension (default behaviour)."
+        }
+      }
+    }
+  },
+
+  "files": [
+    "out/**",
+    "bin/**",
+    "package.json",
+    "README.md"
+  ],
+
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.0.0"
+  }
+}
