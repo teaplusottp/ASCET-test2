@@ -11,15 +11,15 @@
   "engines": {
     "vscode": "^1.90.0"
   },
-  "categories": ["Other", "AI"],
-
+  "categories": [
+    "Other",
+    "AI"
+  ],
   "activationEvents": [
     "onStartupFinished"
   ],
   "main": "./out/extension.js",
-
   "contributes": {
-
     "chatParticipants": [
       {
         "id": "ascet",
@@ -43,7 +43,6 @@
         ]
       }
     ],
-
     "commands": [
       {
         "command": "ascet.refresh",
@@ -71,7 +70,6 @@
         "icon": "$(output)"
       }
     ],
-
     "menus": {
       "view/title": [
         {
@@ -103,14 +101,25 @@
         }
       ],
       "commandPalette": [
-        { "command": "ascet.refresh" },
-        { "command": "ascet.selectAndChat" },
-        { "command": "ascet.openLog" },
-        { "command": "ascet.analyzeSelected", "when": "false" },
-        { "command": "ascet.askCopilot",      "when": "false" }
+        {
+          "command": "ascet.refresh"
+        },
+        {
+          "command": "ascet.selectAndChat"
+        },
+        {
+          "command": "ascet.openLog"
+        },
+        {
+          "command": "ascet.analyzeSelected",
+          "when": "false"
+        },
+        {
+          "command": "ascet.askCopilot",
+          "when": "false"
+        }
       ]
     },
-
     "viewsContainers": {
       "activitybar": [
         {
@@ -120,7 +129,6 @@
         }
       ]
     },
-
     "views": {
       "ascetContainer": [
         {
@@ -131,7 +139,6 @@
         }
       ]
     },
-
     "configuration": {
       "title": "ASCET Copilot",
       "properties": {
@@ -153,22 +160,25 @@
       }
     }
   },
-
   "files": [
     "out/**",
     "bin/**",
     "package.json",
     "README.md"
   ],
-
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./"
   },
   "devDependencies": {
+    "@secretlint/node": "^13.0.2",
     "@types/node": "^20.0.0",
+    "@types/uuid": "^10.0.0",
     "@types/vscode": "^1.90.0",
     "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "uuid": "^14.0.0"
   }
 }

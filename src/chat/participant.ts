@@ -1,104 +1,147 @@
-// src/chat/participant.ts — register @ascet chat participant
+// src/chat/participant.ts — register @ascet chat participant  v0.6.0
 //
 // Slash commands:
 //   /list              → list all classes
-//   /analyze <path>    → extract calc + LLM analysis (default)
-//   /diagram <path>    → netlist of block diagram
-//   /dsd <path>        → export Excel DSD
-//   /ai [mode] <path>  → run full AI review pipeline
+//   /analyze <path>    → extract calc + LLM analysis
+//   /diagram <path>    → netlist + SVG diagram
+//   /dsd [path]        → export Excel DSD
+//   /ai [mode] <path>  → full AI review pipeline
 //   /context <path>    → show system prompt + calc code (debug)
 
-import * as vscode from 'vscode';
-import { selectedAscetPath } from '../state';
-import { handleList, handleAnalyze, handleDiagram, handleDsd, handleAi } from './handlers';
-import { getAscetContext } from './context';
-import { log } from '../ui/logger';
+import * as vscode from "vscode";
+import {
+  handleList,
+  handleAnalyze,
+  handleDiagram,
+  handleDsd,
+  handleAiReview,
+  handleContext,
+} from "./handlers";
+import { logInfo, logError } from "../ui/logger";
 
-export function registerChatParticipant(context: vscode.ExtensionContext): void {
-    const participant = vscode.chat.createChatParticipant(
-        'ascet',
-        async (
-            request: vscode.ChatRequest,
-            _ctx:    vscode.ChatContext,
-            stream:  vscode.ChatResponseStream,
-            token:   vscode.CancellationToken
-        ) => {
-            const cmd  = request.command ?? '';
-            const text = request.prompt.trim();
+const PARTICIPANT_ID = "ascet.copilot";
 
-            log(`[Chat] cmd=${cmd || '(default)'}  text=${text.slice(0, 80)}`);
+export function registerParticipant(
+  context: vscode.ExtensionContext
+): vscode.Disposable {
+  const participant = vscode.chat.createChatParticipant(
+    PARTICIPANT_ID,
+    async (
+      request: vscode.ChatRequest,
+      _ctx: vscode.ChatContext,
+      stream: vscode.ChatResponseStream,
+      token: vscode.CancellationToken
+    ) => {
+      logInfo(
+        `@ascet /${request.command ?? "(no command)"} — "${request.prompt}"`
+      );
 
-            // /list — no classpath needed
-            if (cmd === 'list') {
-                await handleList(stream, token);
-                return;
-            }
+      try {
+        switch (request.command) {
+          case "list":
+            await handleList(stream, token);
+            break;
 
-            // Resolve classpath: prompt text OR last selected class
-            const classpath = text || selectedAscetPath;
-            if (!classpath) {
-                stream.markdown(
-                    '⚠️ No class selected.\n\n' +
-                    '**Usage:**\n' +
-                    '- `@ascet /analyze HAZ/VAF_Warning`\n' +
-                    '- `@ascet /diagram HAZ/VAF_Warning`\n' +
-                    '- `@ascet /dsd HAZ/VAF_Warning`\n' +
-                    '- `@ascet /ai [direct|smart_direct] HAZ/VAF_Warning`\n' +
-                    '- Or press the **🔍** button in the ASCET Copilot panel.'
-                );
-                return;
-            }
+          case "analyze": {
+            const class_path = request.prompt.trim();
+            await handleAnalyze(stream, class_path, token, request);
+            break;
+          }
 
-            switch (cmd) {
-                case 'diagram':
-                    await handleDiagram(stream, classpath, token);
-                    break;
+          case "diagram": {
+            const class_path = request.prompt.trim();
+            await handleDiagram(stream, class_path, token);
+            break;
+          }
 
-                case 'dsd':
-                    await handleDsd(stream, classpath, token);
-                    break;
+          case "dsd": {
+            const class_path = request.prompt.trim();
+            await handleDsd(stream, class_path, token);
+            break;
+          }
 
-                case 'ai': {
-                    // Optional mode prefix: "/ai smart_direct HAZ/VAF_Warning"
-                    const MODES = ['direct', 'smart_direct', 'agent'];
-                    const parts = classpath.split(/\s+/);
-                    const mode  = MODES.includes(parts[0]) ? parts.shift()! : 'smart_direct';
-                    const path  = parts.join(' ') || selectedAscetPath || '';
-                    if (!path) {
-                        stream.markdown('⚠️ Provide a class path: `@ascet /ai smart_direct HAZ/VAF_Warning`');
-                        return;
-                    }
-                    await handleAi(stream, path, mode, token);
-                    break;
-                }
+          case "ai": {
+            await handleAiReview(stream, request.prompt, token);
+            break;
+          }
 
-                case 'context': {
-                    // Debug: show raw system prompt + calc code
-                    stream.markdown(`Fetching context for \`${classpath}\`...\n\n`);
-                    const ctx = await getAscetContext(classpath, token);
-                    if (!ctx) {
-                        stream.markdown('❌ Could not fetch context.');
-                        return;
-                    }
-                    stream.markdown(`**Class:** \`${ctx.className}\`\n\n`);
-                    stream.markdown('**System prompt (first 500 chars):**\n\n');
-                    stream.markdown('```\n' + ctx.systemPrompt.slice(0, 500) + '\n```\n\n');
-                    if (ctx.calcCode) {
-                        stream.markdown(`**calc code (${ctx.calcCode.length} chars)** available.\n`);
-                    } else {
-                        stream.markdown('_calc code not available (ASCET not running?)_\n');
-                    }
-                    break;
-                }
+          case "context": {
+            const class_path = request.prompt.trim();
+            await handleContext(stream, class_path, token);
+            break;
+          }
 
-                default:
-                    // /analyze or bare mention
-                    await handleAnalyze(stream, classpath, token);
-                    break;
-            }
+          default: {
+            await _handleFreeChat(stream, request, token);
+            break;
+          }
         }
-    );
+      } catch (e: any) {
+        stream.markdown(`❌ **Unexpected error:** ${e.message}`);
+        logError(`@ascet participant error: ${e.message}\n${e.stack}`);
+      }
+    }
+  );
 
-    participant.iconPath = new vscode.ThemeIcon('circuit-board');
-    context.subscriptions.push(participant);
+  // Metadata
+  participant.iconPath = new vscode.ThemeIcon("circuit-board");
+  participant.followupProvider = {
+    provideFollowups(
+      _result: vscode.ChatResult,
+      _ctx: vscode.ChatContext,
+      _token: vscode.CancellationToken
+    ): vscode.ChatFollowup[] {
+      return [
+        { prompt: "", command: "list",    label: "$(list-tree) List classes" },
+        { prompt: "", command: "diagram", label: "$(symbol-class) Show diagram" },
+        { prompt: "", command: "dsd",     label: "$(file-excel) Export DSD" },
+        { prompt: "", command: "ai",      label: "$(beaker) Full AI review" },
+      ];
+    },
+  };
+
+  return participant;
+}
+
+// ── Free-form chat ────────────────────────────────────────────────────────────
+async function _handleFreeChat(
+  stream: vscode.ChatResponseStream,
+  request: vscode.ChatRequest,
+  token: vscode.CancellationToken
+): Promise<void> {
+  stream.progress("Thinking…");
+
+  const { runAscetCli } = await import("../cli/runner");
+  const sysRes = await runAscetCli<{ system_prompt: string }>(
+    "get_system_prompt",
+    []
+  );
+  const systemPrompt = sysRes.success
+    ? (sysRes.data?.system_prompt ?? "")
+    : "";
+
+  const [model] = await vscode.lm.selectChatModels({
+    vendor: "copilot",
+    family: "gpt-4o",
+  });
+  if (!model) {
+    stream.markdown("❌ No LLM model available.");
+    return;
+  }
+
+  const messages = [
+    ...(systemPrompt
+      ? [vscode.LanguageModelChatMessage.User(systemPrompt)]
+      : []),
+    vscode.LanguageModelChatMessage.User(request.prompt),
+  ];
+
+  try {
+    const response = await model.sendRequest(messages, {}, token);
+    for await (const chunk of response.text) {
+      stream.markdown(chunk);
+    }
+  } catch (e: any) {
+    stream.markdown(`❌ LLM error: ${e.message}`);
+  }
 }

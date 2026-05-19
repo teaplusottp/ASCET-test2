@@ -1,162 +1,391 @@
-// src/chat/handlers.ts — @ascet slash-command handlers
+// src/chat/handlers.ts — @ascet slash-command handlers  v0.6.0
 //
-// Mỗi handler nhận (stream, classpath, token) và tự xử lý CLI call.
-// participant.ts chỉ dispatch đến đây — không có logic nghiệp vụ ở đó.
+// Slash commands:
+//   /list              → list all classes
+//   /analyze <path>    → extract calc + LLM analysis
+//   /diagram <path>    → block diagram SVG + Mermaid
+//   /dsd [path]        → export Excel DSD
+//   /ai [mode] <path>  → full AI review pipeline
+//   /context <path>    → system prompt + calc code (debug)
 
-import * as vscode from 'vscode';
-import { runAscetCli }      from '../cli/runner';
-import { getAscetContext }  from './context';
-import { setSelectedPath }  from '../state';
-import { updateStatusBar }  from '../ui/statusBar';
-import { log }              from '../ui/logger';
-import {
-    CalcCodeResult,
-    AnalyzeResult,
-    DsdExportResult,
-    AscetTreeRoot,
-} from '../cli/types';
+import * as vscode from "vscode";
+import * as os from "os";
+import * as path from "path";
+import { runAscetCli } from "../cli/runner";
+import { getAscetContext, buildLmMessages } from "./context";
+import { logInfo, logError } from "../ui/logger";
+import type {
+  AiReviewResult,
+  DiagramLogicResult,
+  DiagramRenderResult,
+  DsdExportResult,
+  AscetContext,
+} from "../cli/types";
 
-// ── /list ─────────────────────────────────────────────────────────────────
+type ChatStream = vscode.ChatResponseStream;
+type CancelToken = vscode.CancellationToken;
+
+// ── /list ─────────────────────────────────────────────────────────────────────
 export async function handleList(
-    stream: vscode.ChatResponseStream,
-    token:  vscode.CancellationToken
+  stream: ChatStream,
+  _token: CancelToken
 ): Promise<void> {
-    stream.markdown('Scanning ASCET Database...\n\n');
-    const result = await runAscetCli<string[]>('list_classes', [], token);
-    if (!result.success) {
-        stream.markdown(`❌ **Error:** ${result.error}`);
-        return;
-    }
-    stream.markdown(`Found **${result.data.length}** classes:\n\n`);
-    for (const cls of result.data) {
-        stream.markdown(`- \`${cls}\`\n`);
-    }
+  stream.progress("Loading class list…");
+  const result = await runAscetCli<string[]>("list_classes", []);
+
+  if (!result.success || !result.data) {
+    stream.markdown(`❌ **Error:** ${result.error}`);
+    return;
+  }
+
+  stream.markdown(`### ASCET Classes (${result.data.length})\n\n`);
+  stream.markdown(result.data.map((c) => `- \`${c}\``).join("\n"));
+  stream.markdown(
+    `\n\n> Tip: \`@ascet /analyze <class_path>\` to analyze any class.`
+  );
 }
 
-// ── /diagram ──────────────────────────────────────────────────────────────
-export async function handleDiagram(
-    stream:    vscode.ChatResponseStream,
-    classpath: string,
-    token:     vscode.CancellationToken
-): Promise<void> {
-    stream.markdown(`Reading block diagram: \`${classpath}\`...\n\n`);
-    const result = await runAscetCli<object>('check_diagram', ['--path', classpath], token);
-    if (!result.success) {
-        stream.markdown(`❌ **Error:** ${result.error}`);
-        return;
-    }
-    stream.markdown('```json\n' + JSON.stringify(result.data, null, 2) + '\n```');
-}
-
-// ── /dsd ─────────────────────────────────────────────────────────────────
-export async function handleDsd(
-    stream:    vscode.ChatResponseStream,
-    classpath: string,
-    token:     vscode.CancellationToken
-): Promise<void> {
-    stream.markdown(`Exporting DSD (Excel) for \`${classpath}\`...\n\n`);
-    const result = await runAscetCli<DsdExportResult>(
-        'export_dsd', ['--path', classpath], token
-    );
-    if (!result.success) {
-        stream.markdown(`❌ **Error:** ${result.error}`);
-        return;
-    }
-    const { class_name, excel_path } = result.data;
-    stream.markdown(`✅ **${class_name}** exported.\n\n`);
-    stream.markdown(`📄 File: \`${excel_path}\``);
-}
-
-// ── /ai ──────────────────────────────────────────────────────────────────
-export async function handleAi(
-    stream:    vscode.ChatResponseStream,
-    classpath: string,
-    mode:      string,
-    token:     vscode.CancellationToken
-): Promise<void> {
-    stream.markdown(`🤖 Running AI review (**${mode}** mode) for \`${classpath}\`...\n\n`);
-    stream.markdown('_This may take 30–120 seconds depending on model and RAG settings._\n\n');
-
-    const result = await runAscetCli<AnalyzeResult>(
-        'analyze_code',
-        ['--path', classpath, '--mode', mode],
-        token
-    );
-    if (!result.success) {
-        stream.markdown(`❌ **Error:** ${result.error}`);
-        if (result.detail) {
-            stream.markdown('```\n' + result.detail + '\n```');
-        }
-        return;
-    }
-
-    const d = result.data;
-    const ruleCount = (d.rule_errors as unknown[])?.length ?? 0;
-    const aiCount   = (d.ai_errors   as unknown[])?.length ?? 0;
-
-    stream.markdown(`### Review complete\n\n`);
-    stream.markdown(`- Rule errors: **${ruleCount}**\n`);
-    stream.markdown(`- AI errors:   **${aiCount}**\n`);
-    if (d.report_path) {
-        stream.markdown(`- Report: \`${d.report_path}\`\n`);
-    }
-    if (ruleCount > 0 || aiCount > 0) {
-        stream.markdown('\n```json\n' + JSON.stringify(d, null, 2).slice(0, 3000) + '\n```');
-    }
-}
-
-// ── /analyze (default) ───────────────────────────────────────────────────
+// ── /analyze ──────────────────────────────────────────────────────────────────
 export async function handleAnalyze(
-    stream:    vscode.ChatResponseStream,
-    classpath: string,
-    token:     vscode.CancellationToken
+  stream: ChatStream,
+  class_path: string,
+  token: CancelToken,
+  request: vscode.ChatRequest
 ): Promise<void> {
-    // 1. Fetch context (system prompt + calc code)
-    const ctx = await getAscetContext(classpath, token);
+  if (!class_path) {
+    stream.markdown("❌ Usage: `/analyze <class_path>`");
+    return;
+  }
 
-    // 2. Fetch raw calc code for display (may already be in ctx)
-    stream.markdown(`Extracting \`Main.calc\` for **${classpath}**...\n\n`);
-    const result = await runAscetCli<CalcCodeResult>(
-        'get_calc_code', ['--path', classpath], token
+  stream.progress(`Fetching context for \`${class_path}\`…`);
+  const ctx = await getAscetContext(class_path, token);
+  if (!ctx) {
+    stream.markdown(`❌ Cannot load context for \`${class_path}\``);
+    return;
+  }
+
+  // Hiển thị calc code
+  if (ctx.calc_code) {
+    stream.markdown(`### 📋 Calc Code: \`${class_path}\`\n`);
+    stream.markdown("```esdl\n" + ctx.calc_code + "\n```\n\n");
+  } else {
+    stream.markdown(
+      `> ⚠️ No calc code loaded${ctx.warning ? `: ${ctx.warning}` : "."}\n\n`
     );
+  }
 
-    if (!result.success) {
-        stream.markdown(
-            `❌ **Error:** ${result.error}` +
-            (result.detail ? `\n\n\`\`\`\n${result.detail}\n\`\`\`` : '')
-        );
-        return;
+  // Gửi lên LLM với system prompt đã inject
+  stream.progress("Sending to LLM for analysis…");
+  const [model] = await vscode.lm.selectChatModels({
+    vendor: "copilot",
+    family: "gpt-4o",
+  });
+  if (!model) {
+    stream.markdown("❌ No LLM model available.");
+    return;
+  }
+
+  const userQuery =
+    "Analyze the following ASCET ESDL calc code and report any issues:\n\n```esdl\n" +
+    (ctx.calc_code ?? "(no code)") +
+    "\n```";
+  const messages = buildLmMessages(ctx, userQuery);
+
+  try {
+    const response = await model.sendRequest(messages, {}, token);
+    stream.markdown("### 🤖 LLM Analysis\n\n");
+    for await (const chunk of response.text) {
+      stream.markdown(chunk);
     }
+  } catch (e: any) {
+    stream.markdown(`❌ LLM error: ${e.message}`);
+    logError(`LLM error in /analyze: ${e.message}`);
+  }
+}
 
-    const { calc_code, class_name, line_count } = result.data;
-    setSelectedPath(classpath);
-    updateStatusBar();
+// ── /diagram ──────────────────────────────────────────────────────────────────
+export async function handleDiagram(
+  stream: ChatStream,
+  class_path: string,
+  _token: CancelToken
+): Promise<void> {
+  if (!class_path) {
+    stream.markdown("❌ Usage: `/diagram <class_path>`");
+    return;
+  }
 
-    stream.markdown(`### \`${class_name}\`  ·  ${line_count} lines\n\n`);
-    stream.markdown('```c\n' + calc_code + '\n```\n\n');
+  stream.progress(`Rendering diagram for \`${class_path}\`…`);
 
-    // 3. LLM analysis — inject ASCET system prompt if available
-    const models = await vscode.lm.selectChatModels({ family: 'gpt-4o' });
-    if (models.length === 0) {
-        stream.markdown('_No language model available. Code shown above._');
-        return;
+  const [renderRes, logicRes] = await Promise.all([
+    runAscetCli<DiagramRenderResult>("render_diagram", [
+      "--path", class_path,
+      "--format", "svg",
+    ]),
+    runAscetCli<DiagramLogicResult>("get_diagram_logic", ["--path", class_path]),
+  ]);
+
+  if (!renderRes.success || !renderRes.data) {
+    stream.markdown(`❌ Diagram render failed: ${renderRes.error}`);
+    return;
+  }
+
+  // Mermaid logic
+  if (logicRes.success && logicRes.data?.mermaid) {
+    stream.markdown(`### 🔀 Block Diagram Logic: \`${class_path}\`\n`);
+    stream.markdown("```mermaid\n" + logicRes.data.mermaid + "\n```\n\n");
+  }
+
+  stream.markdown(
+    `> SVG diagram ready. Click below to open in a panel.\n`
+  );
+  stream.button({
+    command: "ascet.showDiagram",
+    arguments: [{ path: class_path }],
+    title: "$(symbol-class) Open Diagram Panel",
+  });
+
+  // Netlist summary
+  if (logicRes.success && logicRes.data?.netlist?.length) {
+    const nl = logicRes.data.netlist;
+    stream.markdown(`\n### 🔌 Netlist (${nl.length} connections)\n`);
+    stream.markdown(
+      nl
+        .slice(0, 20)
+        .map(
+          (e) =>
+            `- \`${e.from}\` → \`${e.to}\`${e.signal ? ` *(${e.signal})*` : ""}`
+        )
+        .join("\n")
+    );
+    if (nl.length > 20) {
+      stream.markdown(`\n*…and ${nl.length - 20} more connections.*`);
     }
+  }
+}
 
-    const systemPrompt = ctx?.systemPrompt ??
-        `You are a senior embedded-software engineer reviewing ASCET calc code.`;
+// ── /dsd ─────────────────────────────────────────────────────────────────────
+export async function handleDsd(
+  stream: ChatStream,
+  class_path: string,
+  _token: CancelToken
+): Promise<void> {
+  const outputDir = path.join(os.tmpdir(), "ascet_dsd");
+  const cliArgs: string[] = ["--output_dir", outputDir];
 
-    const userMsg =
-        `Analyze the following ASCET calc code for class "${class_name}". ` +
-        `Explain step-by-step what it does, identify potential issues, and suggest improvements.\n\n` +
-        '```c\n' + calc_code + '\n```';
+  if (class_path) {
+    cliArgs.push("--class_path", class_path);
+    stream.progress(`Exporting DSD for \`${class_path}\`…`);
+  } else {
+    stream.progress("Exporting DSD for all classes…");
+  }
 
-    const messages = [
-        vscode.LanguageModelChatMessage.User(systemPrompt),
-        vscode.LanguageModelChatMessage.User(userMsg),
-    ];
+  const result = await runAscetCli<DsdExportResult>("export_dsd", cliArgs);
 
-    stream.markdown('---\n### 🤖 AI Analysis\n\n');
-    const response = await models[0].sendRequest(messages, {}, token);
-    for await (const chunk of response.text) { stream.markdown(chunk); }
-    log(`[Analyze] Done: ${class_name}`);
+  if (!result.success || !result.data) {
+    stream.markdown(`❌ DSD export failed: ${result.error}`);
+    logError(`DSD export failed: ${result.error}\n${result.detail}`);
+    return;
+  }
+
+  const outFile = result.data.output_file;
+  logInfo(`DSD exported: ${outFile}`);
+
+  stream.markdown(`### 📊 DSD Export Complete\n`);
+  stream.markdown(`- **File:** \`${outFile}\`\n`);
+  stream.button({
+    command: "vscode.open",
+    arguments: [vscode.Uri.file(outFile)],
+    title: "$(file-excel) Open Excel File",
+  });
+}
+
+// ── /ai ───────────────────────────────────────────────────────────────────────
+// Usage:
+//   /ai <class_path>
+//   /ai conservative <class_path>
+//   /ai severity <class_path>
+//   /ai majority <class_path>
+//   /ai --no_rag <class_path>
+export async function handleAiReview(
+  stream: ChatStream,
+  rawArgs: string,
+  token: CancelToken
+): Promise<void> {
+  const MODES = ["conservative", "severity", "majority"] as const;
+  type Mode = (typeof MODES)[number];
+
+  let mode: Mode = "severity";
+  let noRag = false;
+  let class_path = rawArgs.trim();
+
+  if (class_path.includes("--no_rag")) {
+    noRag = true;
+    class_path = class_path.replace("--no_rag", "").trim();
+  }
+
+  for (const m of MODES) {
+    if (class_path.startsWith(m + " ")) {
+      mode = m;
+      class_path = class_path.slice(m.length).trim();
+      break;
+    }
+  }
+
+  if (!class_path) {
+    stream.markdown(
+      "❌ Usage: `/ai [conservative|severity|majority] [--no_rag] <class_path>`"
+    );
+    return;
+  }
+
+  stream.progress(
+    `Running full AI review: \`${class_path}\` [mode=${mode}${noRag ? ", no_rag" : ""}]…`
+  );
+  logInfo(`/ai review: ${class_path} mode=${mode} no_rag=${noRag}`);
+
+  const cliArgs = [
+    class_path,
+    "--mode", mode,
+    ...(noRag ? ["--no_rag"] : []),
+  ];
+
+  const result = await runAscetCli<AiReviewResult>("ai_review", cliArgs, token);
+
+  if (!result.success || !result.data) {
+    stream.markdown(`❌ AI Review failed: ${result.error}`);
+    logError(`/ai failed: ${result.error}\n${result.detail}`);
+    return;
+  }
+
+  const d = result.data;
+
+  // ── Summary header ──
+  stream.markdown(`### 🔍 AI Review: \`${class_path}\`\n`);
+  stream.markdown(`> ${d.summary}\n\n`);
+  stream.markdown(
+    `| Metric | Value |\n|--------|-------|\n` +
+      `| Rule issues | ${d.rule_issues.length} |\n` +
+      `| AI errors | ${d.ai_errors.length} |\n` +
+      `| AI warnings | ${d.ai_warnings.length} |\n` +
+      `| Diagram issues | ${d.diagram_issues?.length ?? 0} |\n` +
+      `| RAG hits | ${d.rag_hits.length} |\n` +
+      `| Tokens used | ${d.tokens_used} |\n` +
+      `| Cost | $${d.cost_usd.toFixed(4)} |\n\n`
+  );
+
+  // ── Rule issues ──
+  if (d.rule_issues.length > 0) {
+    stream.markdown(`#### ⚙️ Rule Issues (${d.rule_issues.length})\n`);
+    for (const issue of d.rule_issues) {
+      const icon =
+        issue.severity === "error"
+          ? "🔴"
+          : issue.severity === "warning"
+          ? "🟡"
+          : "🔵";
+      stream.markdown(
+        `${icon} **[${issue.rule_id ?? issue.severity}]** ${issue.message}` +
+          (issue.location ? ` *(${issue.location})*` : "") +
+          "\n"
+      );
+    }
+    stream.markdown("\n");
+  }
+
+  // ── AI errors ──
+  if (d.ai_errors.length > 0) {
+    stream.markdown(`#### 🔴 AI Errors (${d.ai_errors.length})\n`);
+    for (const err of d.ai_errors) {
+      stream.markdown(
+        `- **${err.message}**` +
+          (err.line ? ` *(line ${err.line})*` : "") +
+          (err.suggestion ? `\n  > 💡 ${err.suggestion}` : "") +
+          "\n"
+      );
+    }
+    stream.markdown("\n");
+  }
+
+  // ── AI warnings ──
+  if (d.ai_warnings.length > 0) {
+    stream.markdown(`#### 🟡 AI Warnings (${d.ai_warnings.length})\n`);
+    for (const w of d.ai_warnings) {
+      stream.markdown(
+        `- ${w.message}` +
+          (w.suggestion ? `\n  > 💡 ${w.suggestion}` : "") +
+          "\n"
+      );
+    }
+    stream.markdown("\n");
+  }
+
+  // ── Diagram issues ──
+  if ((d.diagram_issues?.length ?? 0) > 0) {
+    stream.markdown(`#### 🔀 Diagram Issues (${d.diagram_issues.length})\n`);
+    for (const di of d.diagram_issues) {
+      stream.markdown(`- **[${di.rule_id}]** ${di.message}\n`);
+    }
+    stream.markdown("\n");
+  }
+
+  // ── RAG hits ──
+  if (d.rag_hits.length > 0) {
+    stream.markdown(`#### 📚 RAG Knowledge Hits (${d.rag_hits.length})\n`);
+    for (const hit of d.rag_hits) {
+      stream.markdown(
+        `- **${hit.pattern}** *(similarity: ${hit.similarity.toFixed(2)})*\n` +
+          `  ${hit.description}\n`
+      );
+    }
+    stream.markdown("\n");
+  }
+
+  // ── Action buttons ──
+  stream.button({
+    command: "ascet.showDiagram",
+    arguments: [{ path: class_path }],
+    title: "$(symbol-class) View Diagram",
+  });
+  stream.button({
+    command: "ascet.exportDsd",
+    arguments: [{ path: class_path }],
+    title: "$(file-excel) Export DSD",
+  });
+}
+
+// ── /context ──────────────────────────────────────────────────────────────────
+export async function handleContext(
+  stream: ChatStream,
+  class_path: string,
+  _token: CancelToken
+): Promise<void> {
+  if (!class_path) {
+    stream.markdown("❌ Usage: `/context <class_path>`");
+    return;
+  }
+
+  stream.progress(`Loading context for \`${class_path}\`…`);
+
+  const ctx = await getAscetContext(class_path);
+  if (!ctx) {
+    stream.markdown(`❌ Cannot load context for \`${class_path}\``);
+    return;
+  }
+
+  stream.markdown(`### 🧠 LLM Context: \`${class_path}\`\n\n`);
+
+  stream.markdown("#### System Prompt (ASCET Rules)\n");
+  stream.markdown(
+    "```\n" +
+      ctx.system_prompt.slice(0, 800) +
+      (ctx.system_prompt.length > 800 ? "\n…(truncated)" : "") +
+      "\n```\n\n"
+  );
+
+  stream.markdown("#### Calc Code\n");
+  if (ctx.calc_code) {
+    stream.markdown("```esdl\n" + ctx.calc_code + "\n```\n");
+  } else {
+    stream.markdown(`> ⚠️ No calc code${ctx.warning ? `: ${ctx.warning}` : "."}\n`);
+  }
 }
