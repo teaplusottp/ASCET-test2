@@ -15,7 +15,7 @@
 
 import * as vscode from "vscode";
 import * as path from "path";
-import { runCli } from "../cli/runner";
+import { runAscetCli } from "../cli/runner";
 import { getLog, getStatusBar } from "../state";
 import { updateStatusBar } from "../ui/statusBar";
 import { logInfo, logError } from "../ui/logger";
@@ -23,10 +23,20 @@ import { getScanQueue } from "../queue/scanQueue";
 import type {
   AscetTreeNode,
   DsdExportResult,
-  AiReviewResult,
+  AnalyzeCodeResult,
   DiagramRenderResult,
   DiagramLogicResult,
 } from "../cli/types";
+
+// Status bar helpers
+function setStatus(text: string): void {
+  const bar = getStatusBar();
+  bar.text = text;
+  bar.show();
+}
+function clearStatus(): void {
+  updateStatusBar();
+}
 
 // Injected from activate()
 let _treeProvider: any;
@@ -41,7 +51,7 @@ async function pickClassPath(
   if (preselected) return preselected;
 
   // Quick pick từ danh sách class
-  const result = await runCli<string[]>("list_classes", []);
+  const result = await runAscetCli<string[]>("list_classes", []);
   if (!result.success || !result.data) {
     vscode.window.showErrorMessage("Cannot load class list: " + result.error);
     return undefined;
@@ -93,9 +103,9 @@ export async function cmdAnalyzeSelected(
   logInfo(`Analyzing: ${class_path}`);
 
   try {
-    const result = await runCli<AiReviewResult>("ai_review", [
-      class_path,
-      "--mode", "severity",
+    const result = await runAscetCli<AnalyzeCodeResult>("analyze_code", [
+      "--path", class_path,
+      "--mode", "direct",
     ]);
 
     if (!result.success || !result.data) {
@@ -160,7 +170,7 @@ export async function cmdExportDsd(node?: AscetTreeNode): Promise<void> {
 
   setStatus("$(file-excel~spin) Exporting DSD…");
   try {
-    const result = await runCli<DsdExportResult>("export_dsd", cliArgs);
+    const result = await runAscetCli<DsdExportResult>("export_dsd", cliArgs);
     if (!result.success || !result.data) {
       vscode.window.showErrorMessage(`DSD export failed: ${result.error}`);
       logError(`DSD export failed: ${result.error}`);
@@ -207,16 +217,16 @@ export async function cmdRunAiReview(node?: AscetTreeNode): Promise<void> {
   if (!useRag) return;
 
   const cliArgs = [
-    class_path,
-    "--mode", mode.value,
-    ...(useRag.startsWith("No") ? ["--no_rag"] : []),
+    "--path", class_path,
+    "--mode", mode.value === "severity" ? "ai_rule" : "direct",
+    ...(useRag.startsWith("No") ? [] : ["--rag_enabled"]),
   ];
 
   setStatus(`$(beaker~spin) AI Review: ${class_path}…`);
   logInfo(`AI Review started: ${class_path} [mode=${mode.value}]`);
 
   try {
-    const result = await runCli<AiReviewResult>("ai_review", cliArgs);
+    const result = await runAscetCli<AnalyzeCodeResult>("analyze_code", cliArgs);
     if (!result.success || !result.data) {
       vscode.window.showErrorMessage(`AI Review failed: ${result.error}`);
       logError(`AI Review failed: ${result.error}\n${result.detail}`);
@@ -290,8 +300,8 @@ export async function cmdShowDiagram(node?: AscetTreeNode): Promise<void> {
   try {
     // Lấy SVG render + Mermaid logic song song
     const [renderResult, logicResult] = await Promise.all([
-      runCli<DiagramRenderResult>("render_diagram", [class_path, "--format", "svg"]),
-      runCli<DiagramLogicResult>("get_diagram_logic", [class_path]),
+      runAscetCli<DiagramRenderResult>("render_diagram", ["--path", class_path, "--format", "svg"]),
+      runAscetCli<DiagramLogicResult>("get_diagram_logic", ["--path", class_path]),
     ]);
 
     if (!renderResult.success || !renderResult.data) {
@@ -309,7 +319,7 @@ export async function cmdShowDiagram(node?: AscetTreeNode): Promise<void> {
     const mermaid = logicResult.success ? logicResult.data?.mermaid ?? "" : "";
     panel.webview.html = _buildDiagramHtml(
       class_path,
-      renderResult.data.content,
+      renderResult.data.content ?? "",
       mermaid
     );
     logInfo(`Diagram loaded: ${class_path}`);
@@ -322,7 +332,7 @@ export async function cmdShowDiagram(node?: AscetTreeNode): Promise<void> {
 // WebView HTML builders
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function _showReviewPanel(class_path: string, data: AiReviewResult): void {
+function _showReviewPanel(class_path: string, data: AnalyzeCodeResult): void {
   const panel = vscode.window.createWebviewPanel(
     "ascetReview",
     `AI Review: ${class_path}`,
@@ -332,7 +342,7 @@ function _showReviewPanel(class_path: string, data: AiReviewResult): void {
   panel.webview.html = _buildReviewHtml(class_path, data);
 }
 
-function _buildReviewHtml(class_path: string, d: AiReviewResult): string {
+function _buildReviewHtml(class_path: string, d: AnalyzeCodeResult): string {
   const esc = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -368,24 +378,22 @@ function _buildReviewHtml(class_path: string, d: AiReviewResult): string {
   </style></head><body>
   <h1>🔍 AI Review: ${esc(class_path)}</h1>
   <div class="summary">${esc(d.summary)}</div>
-  <span class="stat">Tokens: ${d.tokens_used}</span>
-  <span class="stat">Cost: $${d.cost_usd.toFixed(4)}</span>
+  <span class="stat">High: ${d.stats.high}</span>
+  <span class="stat">Medium: ${d.stats.medium}</span>
+  <span class="stat">Low: ${d.stats.low}</span>
   <span class="stat">RAG hits: ${d.rag_hits.length}</span>
 
-  <h2>Rule Issues (${d.rule_issues.length})</h2>
-  ${issueRows(d.rule_issues, "rule issues")}
+  <h2>Rule Checks (${d.rule_errors.length})</h2>
+  ${issueRows(d.rule_errors, "rule issues")}
 
-  <h2>AI Errors (${d.ai_errors.length})</h2>
+  <h2>AI Findings (${d.ai_errors.length})</h2>
   ${issueRows(d.ai_errors, "AI errors")}
-
-  <h2>AI Warnings (${d.ai_warnings.length})</h2>
-  ${issueRows(d.ai_warnings, "AI warnings")}
 
   <h2>RAG Knowledge Hits (${d.rag_hits.length})</h2>
   ${d.rag_hits.length === 0
     ? '<p style="color:#888">No RAG hits</p>'
-    : `<ul>${d.rag_hits.map((h) =>
-        `<li><b>${esc(h.pattern)}</b> (sim: ${h.similarity.toFixed(2)}) — ${esc(h.description)}</li>`
+    : `<ul>${d.rag_hits.map((h: import('../cli/types').RagHit) =>
+        `<li><b>${esc(h.pattern ?? "")}</b> (sim: ${(h.similarity * 100).toFixed(0)}%) — ${esc(h.description ?? "")}</li>`
       ).join("")}</ul>`
   }
   </body></html>`;

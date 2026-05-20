@@ -306,7 +306,7 @@ async function _cmdShowDiagram(arg) {
             vscode.window.showErrorMessage(`Diagram failed: ${result.error}`);
             return;
         }
-        const svgContent = result.data.content;
+        const svgContent = result.data.content ?? "";
         const className = class_path.split("\\").pop() ?? class_path;
         // Tái sử dụng panel nếu đang mở
         if (_diagramPanel) {

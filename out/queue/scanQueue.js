@@ -124,9 +124,9 @@ class ScanQueue {
         const log = (0, state_1.getOutputChannel)();
         log.appendLine(`[Queue] Scanning: ${next.class_path}`);
         try {
-            const result = await (0, runner_1.runAscetCli)("ai_review", [
-                next.class_path,
-                "--mode", "severity",
+            const result = await (0, runner_1.runAscetCli)("analyze_code", [
+                "--path", next.class_path,
+                "--mode", "direct",
             ]);
             if (result.success && result.data) {
                 next.status = "done";

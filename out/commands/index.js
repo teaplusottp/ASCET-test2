@@ -66,6 +66,15 @@ const state_1 = require("../state");
 const statusBar_1 = require("../ui/statusBar");
 const logger_1 = require("../ui/logger");
 const scanQueue_1 = require("../queue/scanQueue");
+// Status bar helpers
+function setStatus(text) {
+    const bar = (0, state_1.getStatusBar)();
+    bar.text = text;
+    bar.show();
+}
+function clearStatus() {
+    (0, statusBar_1.updateStatusBar)();
+}
 // Injected from activate()
 let _treeProvider;
 function injectTreeProvider(p) {
@@ -76,7 +85,7 @@ async function pickClassPath(preselected) {
     if (preselected)
         return preselected;
     // Quick pick từ danh sách class
-    const result = await (0, runner_1.runCli)("list_classes", []);
+    const result = await (0, runner_1.runAscetCli)("list_classes", []);
     if (!result.success || !result.data) {
         vscode.window.showErrorMessage("Cannot load class list: " + result.error);
         return undefined;
@@ -89,13 +98,13 @@ async function pickClassPath(preselected) {
 // ── ascet.refresh ─────────────────────────────────────────────────────────────
 async function cmdRefresh() {
     (0, logger_1.logInfo)("Refreshing class tree…");
-    (0, statusBar_1.setStatus)("$(sync~spin) Refreshing…");
+    setStatus("$(sync~spin) Refreshing…");
     try {
         await _treeProvider?.refresh();
         (0, logger_1.logInfo)("Tree refreshed.");
     }
     finally {
-        (0, statusBar_1.clearStatus)();
+        clearStatus();
     }
 }
 // ── ascet.selectAndChat ───────────────────────────────────────────────────────
@@ -115,12 +124,12 @@ async function cmdAnalyzeSelected(node) {
     const class_path = await pickClassPath(node?.path);
     if (!class_path)
         return;
-    (0, statusBar_1.setStatus)(`$(beaker~spin) Analyzing ${class_path}…`);
+    setStatus(`$(beaker~spin) Analyzing ${class_path}…`);
     (0, logger_1.logInfo)(`Analyzing: ${class_path}`);
     try {
-        const result = await (0, runner_1.runCli)("ai_review", [
-            class_path,
-            "--mode", "severity",
+        const result = await (0, runner_1.runAscetCli)("analyze_code", [
+            "--path", class_path,
+            "--mode", "direct",
         ]);
         if (!result.success || !result.data) {
             vscode.window.showErrorMessage(`Analysis failed: ${result.error}`);
@@ -131,7 +140,7 @@ async function cmdAnalyzeSelected(node) {
         (0, logger_1.logInfo)(`Analysis done: ${result.data.summary}`);
     }
     finally {
-        (0, statusBar_1.clearStatus)();
+        clearStatus();
     }
 }
 // ── ascet.askCopilot ──────────────────────────────────────────────────────────
@@ -175,9 +184,9 @@ async function cmdExportDsd(node) {
             (0, logger_1.logInfo)("Exporting DSD for all classes…");
         }
     }
-    (0, statusBar_1.setStatus)("$(file-excel~spin) Exporting DSD…");
+    setStatus("$(file-excel~spin) Exporting DSD…");
     try {
-        const result = await (0, runner_1.runCli)("export_dsd", cliArgs);
+        const result = await (0, runner_1.runAscetCli)("export_dsd", cliArgs);
         if (!result.success || !result.data) {
             vscode.window.showErrorMessage(`DSD export failed: ${result.error}`);
             (0, logger_1.logError)(`DSD export failed: ${result.error}`);
@@ -194,7 +203,7 @@ async function cmdExportDsd(node) {
         }
     }
     finally {
-        (0, statusBar_1.clearStatus)();
+        clearStatus();
     }
 }
 // ── ascet.runAiReview ─────────────────────────────────────────────────────────
@@ -214,14 +223,14 @@ async function cmdRunAiReview(node) {
     if (!useRag)
         return;
     const cliArgs = [
-        class_path,
-        "--mode", mode.value,
-        ...(useRag.startsWith("No") ? ["--no_rag"] : []),
+        "--path", class_path,
+        "--mode", mode.value === "severity" ? "ai_rule" : "direct",
+        ...(useRag.startsWith("No") ? [] : ["--rag_enabled"]),
     ];
-    (0, statusBar_1.setStatus)(`$(beaker~spin) AI Review: ${class_path}…`);
+    setStatus(`$(beaker~spin) AI Review: ${class_path}…`);
     (0, logger_1.logInfo)(`AI Review started: ${class_path} [mode=${mode.value}]`);
     try {
-        const result = await (0, runner_1.runCli)("ai_review", cliArgs);
+        const result = await (0, runner_1.runAscetCli)("analyze_code", cliArgs);
         if (!result.success || !result.data) {
             vscode.window.showErrorMessage(`AI Review failed: ${result.error}`);
             (0, logger_1.logError)(`AI Review failed: ${result.error}\n${result.detail}`);
@@ -231,7 +240,7 @@ async function cmdRunAiReview(node) {
         (0, logger_1.logInfo)(`AI Review done: ${result.data.summary}`);
     }
     finally {
-        (0, statusBar_1.clearStatus)();
+        clearStatus();
     }
 }
 // ── ascet.addToQueue (🆕) ─────────────────────────────────────────────────────
@@ -276,13 +285,13 @@ async function cmdShowDiagram(node) {
     const class_path = await pickClassPath(node?.path);
     if (!class_path)
         return;
-    (0, statusBar_1.setStatus)(`$(symbol-class~spin) Loading diagram…`);
+    setStatus(`$(symbol-class~spin) Loading diagram…`);
     (0, logger_1.logInfo)(`Loading diagram: ${class_path}`);
     try {
         // Lấy SVG render + Mermaid logic song song
         const [renderResult, logicResult] = await Promise.all([
-            (0, runner_1.runCli)("render_diagram", [class_path, "--format", "svg"]),
-            (0, runner_1.runCli)("get_diagram_logic", [class_path]),
+            (0, runner_1.runAscetCli)("render_diagram", ["--path", class_path, "--format", "svg"]),
+            (0, runner_1.runAscetCli)("get_diagram_logic", ["--path", class_path]),
         ]);
         if (!renderResult.success || !renderResult.data) {
             vscode.window.showErrorMessage(`Diagram render failed: ${renderResult.error}`);
@@ -290,11 +299,11 @@ async function cmdShowDiagram(node) {
         }
         const panel = vscode.window.createWebviewPanel("ascetDiagram", `Diagram: ${class_path}`, vscode.ViewColumn.Two, { enableScripts: true });
         const mermaid = logicResult.success ? logicResult.data?.mermaid ?? "" : "";
-        panel.webview.html = _buildDiagramHtml(class_path, renderResult.data.content, mermaid);
+        panel.webview.html = _buildDiagramHtml(class_path, renderResult.data.content ?? "", mermaid);
         (0, logger_1.logInfo)(`Diagram loaded: ${class_path}`);
     }
     finally {
-        (0, statusBar_1.clearStatus)();
+        clearStatus();
     }
 }
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -334,23 +343,21 @@ function _buildReviewHtml(class_path, d) {
   </style></head><body>
   <h1>🔍 AI Review: ${esc(class_path)}</h1>
   <div class="summary">${esc(d.summary)}</div>
-  <span class="stat">Tokens: ${d.tokens_used}</span>
-  <span class="stat">Cost: $${d.cost_usd.toFixed(4)}</span>
+  <span class="stat">High: ${d.stats.high}</span>
+  <span class="stat">Medium: ${d.stats.medium}</span>
+  <span class="stat">Low: ${d.stats.low}</span>
   <span class="stat">RAG hits: ${d.rag_hits.length}</span>
 
-  <h2>Rule Issues (${d.rule_issues.length})</h2>
-  ${issueRows(d.rule_issues, "rule issues")}
+  <h2>Rule Checks (${d.rule_errors.length})</h2>
+  ${issueRows(d.rule_errors, "rule issues")}
 
-  <h2>AI Errors (${d.ai_errors.length})</h2>
+  <h2>AI Findings (${d.ai_errors.length})</h2>
   ${issueRows(d.ai_errors, "AI errors")}
-
-  <h2>AI Warnings (${d.ai_warnings.length})</h2>
-  ${issueRows(d.ai_warnings, "AI warnings")}
 
   <h2>RAG Knowledge Hits (${d.rag_hits.length})</h2>
   ${d.rag_hits.length === 0
         ? '<p style="color:#888">No RAG hits</p>'
-        : `<ul>${d.rag_hits.map((h) => `<li><b>${esc(h.pattern)}</b> (sim: ${h.similarity.toFixed(2)}) — ${esc(h.description)}</li>`).join("")}</ul>`}
+        : `<ul>${d.rag_hits.map((h) => `<li><b>${esc(h.pattern ?? "")}</b> (sim: ${(h.similarity * 100).toFixed(0)}%) — ${esc(h.description ?? "")}</li>`).join("")}</ul>`}
   </body></html>`;
 }
 function _buildQueueHtml(items) {

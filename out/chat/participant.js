@@ -1,5 +1,5 @@
 "use strict";
-// src/chat/participant.ts — register @ascet chat participant  v0.6.0
+// src/chat/participant.ts — register @ascet chat participant  v0.7.0
 //
 // Slash commands:
 //   /list              → list all classes
@@ -7,6 +7,7 @@
 //   /diagram <path>    → netlist + SVG diagram
 //   /dsd [path]        → export Excel DSD
 //   /ai [mode] <path>  → full AI review pipeline
+//   /rag <query>       → query RAG knowledge base
 //   /context <path>    → show system prompt + calc code (debug)
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -72,6 +73,10 @@ function registerParticipant(context) {
                 }
                 case "ai": {
                     await (0, handlers_1.handleAiReview)(stream, request.prompt, token);
+                    break;
+                }
+                case "rag": {
+                    await (0, handlers_1.handleRagQuery)(stream, request.prompt, token);
                     break;
                 }
                 case "context": {
