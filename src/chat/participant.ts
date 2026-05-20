@@ -1,4 +1,4 @@
-// src/chat/participant.ts — register @ascet chat participant  v0.6.0
+// src/chat/participant.ts — register @ascet chat participant  v0.7.0
 //
 // Slash commands:
 //   /list              → list all classes
@@ -6,6 +6,7 @@
 //   /diagram <path>    → netlist + SVG diagram
 //   /dsd [path]        → export Excel DSD
 //   /ai [mode] <path>  → full AI review pipeline
+//   /rag <query>       → query RAG knowledge base
 //   /context <path>    → show system prompt + calc code (debug)
 
 import * as vscode from "vscode";
@@ -15,6 +16,7 @@ import {
   handleDiagram,
   handleDsd,
   handleAiReview,
+  handleRagQuery,
   handleContext,
 } from "./handlers";
 import { logInfo, logError } from "../ui/logger";
@@ -62,6 +64,11 @@ export function registerParticipant(
 
           case "ai": {
             await handleAiReview(stream, request.prompt, token);
+            break;
+          }
+
+          case "rag": {
+            await handleRagQuery(stream, request.prompt, token);
             break;
           }
 

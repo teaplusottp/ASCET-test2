@@ -30,15 +30,31 @@
         "commands": [
           {
             "name": "analyze",
-            "description": "Phân tích calc code của một ASCET class"
+            "description": "Phan tich calc code cua mot ASCET class"
           },
           {
             "name": "list",
-            "description": "Liệt kê toàn bộ class trong database"
+            "description": "Liet ke toan bo class trong database"
           },
           {
             "name": "diagram",
-            "description": "Đọc và mô tả block diagram của một class"
+            "description": "Doc va mo ta block diagram cua mot class"
+          },
+          {
+            "name": "dsd",
+            "description": "Xuat file Excel DSD cho mot class hoac toan bo"
+          },
+          {
+            "name": "ai",
+            "description": "Kiem tra day du: rule + AI review (analyze_code)"
+          },
+          {
+            "name": "rag",
+            "description": "Tim kiem trong RAG knowledge base"
+          },
+          {
+            "name": "context",
+            "description": "Xem system prompt va calc code (debug)"
           }
         ]
       }
@@ -68,56 +84,105 @@
         "command": "ascet.openLog",
         "title": "ASCET: Show Log Panel",
         "icon": "$(output)"
+      },
+      {
+        "command": "ascet.exportDsd",
+        "title": "ASCET: Export DSD to Excel",
+        "icon": "$(file-excel)"
+      },
+      {
+        "command": "ascet.runAiReview",
+        "title": "ASCET: AI Review",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "ascet.addToQueue",
+        "title": "ASCET: Add to Scan Queue",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ascet.showQueue",
+        "title": "ASCET: Show Scan Queue",
+        "icon": "$(list-ordered)"
+      },
+      {
+        "command": "ascet.clearQueue",
+        "title": "ASCET: Clear Scan Queue",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "ascet.showDiagram",
+        "title": "ASCET: Show Block Diagram",
+        "icon": "$(symbol-class)"
       }
     ],
     "menus": {
       "view/title": [
         {
           "command": "ascet.refresh",
-          "when": "view == myAscetTreeView",
+          "when": "view == ascetClassTree",
           "group": "navigation@1"
         },
         {
           "command": "ascet.selectAndChat",
-          "when": "view == myAscetTreeView",
+          "when": "view == ascetClassTree",
           "group": "navigation@2"
         },
         {
-          "command": "ascet.openLog",
-          "when": "view == myAscetTreeView",
+          "command": "ascet.showQueue",
+          "when": "view == ascetClassTree",
           "group": "navigation@3"
+        },
+        {
+          "command": "ascet.openLog",
+          "when": "view == ascetClassTree",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
         {
           "command": "ascet.analyzeSelected",
-          "when": "view == myAscetTreeView && viewItem == ascetClass",
+          "when": "view == ascetClassTree && viewItem == ascetClass",
           "group": "ascet@1"
         },
         {
-          "command": "ascet.askCopilot",
-          "when": "view == myAscetTreeView && viewItem == ascetClass",
+          "command": "ascet.runAiReview",
+          "when": "view == ascetClassTree && viewItem == ascetClass",
           "group": "ascet@2"
+        },
+        {
+          "command": "ascet.showDiagram",
+          "when": "view == ascetClassTree && viewItem == ascetClass",
+          "group": "ascet@3"
+        },
+        {
+          "command": "ascet.exportDsd",
+          "when": "view == ascetClassTree && viewItem == ascetClass",
+          "group": "ascet@4"
+        },
+        {
+          "command": "ascet.addToQueue",
+          "when": "view == ascetClassTree && viewItem == ascetClass",
+          "group": "ascet@5"
+        },
+        {
+          "command": "ascet.askCopilot",
+          "when": "view == ascetClassTree && viewItem == ascetClass",
+          "group": "ascet@6"
         }
       ],
       "commandPalette": [
-        {
-          "command": "ascet.refresh"
-        },
-        {
-          "command": "ascet.selectAndChat"
-        },
-        {
-          "command": "ascet.openLog"
-        },
-        {
-          "command": "ascet.analyzeSelected",
-          "when": "false"
-        },
-        {
-          "command": "ascet.askCopilot",
-          "when": "false"
-        }
+        { "command": "ascet.refresh" },
+        { "command": "ascet.selectAndChat" },
+        { "command": "ascet.openLog" },
+        { "command": "ascet.showQueue" },
+        { "command": "ascet.clearQueue" },
+        { "command": "ascet.exportDsd" },
+        { "command": "ascet.analyzeSelected", "when": "false" },
+        { "command": "ascet.askCopilot", "when": "false" },
+        { "command": "ascet.runAiReview", "when": "false" },
+        { "command": "ascet.addToQueue", "when": "false" },
+        { "command": "ascet.showDiagram", "when": "false" }
       ]
     },
     "viewsContainers": {
@@ -132,7 +197,7 @@
     "views": {
       "ascetContainer": [
         {
-          "id": "myAscetTreeView",
+          "id": "ascetClassTree",
           "name": "ASCET Classes",
           "icon": "$(database)",
           "contextualTitle": "ASCET Database"

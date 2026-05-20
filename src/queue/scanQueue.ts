@@ -7,7 +7,7 @@ import * as vscode from "vscode";
 import { v4 as uuidv4 } from "uuid";
 import { runAscetCli } from "../cli/runner";
 import { getOutputChannel } from "../state";
-import type { ScanQueueItem, AiReviewResult } from "../cli/types";
+import type { ScanQueueItem, AnalyzeCodeResult } from "../cli/types";
 
 export class ScanQueue {
   private _items: Map<string, ScanQueueItem> = new Map();
@@ -99,9 +99,9 @@ export class ScanQueue {
     log.appendLine(`[Queue] Scanning: ${next.class_path}`);
 
     try {
-      const result = await runAscetCli<AiReviewResult>("ai_review", [
-        next.class_path,
-        "--mode", "severity",
+      const result = await runAscetCli<AnalyzeCodeResult>("analyze_code", [
+        "--path", next.class_path,
+        "--mode", "direct",
       ]);
 
       if (result.success && result.data) {
