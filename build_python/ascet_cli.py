@@ -84,7 +84,8 @@ def main() -> None:
 
     # Lệnh export_dsd
     p_dsd = sub.add_parser("export_dsd")
-    p_dsd.add_argument("--path", required=True)
+    p_dsd.add_argument("--path", required=True, help="Class path to export (e.g. 'HAZ/VAF_Warning')")
+    p_dsd.add_argument("--output", default="", help="Output Excel file path (optional)")
     add_version(p_dsd)
 
     # Lệnh analyze_ai
@@ -92,6 +93,16 @@ def main() -> None:
     p_ai.add_argument("--path", required=True)
     p_ai.add_argument("--mode", default="smart_direct")
     add_version(p_ai)
+
+    # Lệnh get_system_prompt
+    p_prompt = sub.add_parser("get_system_prompt")
+    p_prompt.add_argument("--type", default="esdl", 
+                         help="Prompt type: esdl, diagram_review, code_review, context_extraction")
+
+    # Lệnh get_context
+    p_context = sub.add_parser("get_context")
+    p_context.add_argument("--path", required=True, help="Class path to get context for")
+    add_version(p_context)
 
     args = parser.parse_args()
 
@@ -145,28 +156,91 @@ def main() -> None:
 
         elif args.command == "export_dsd":
             from src.tools.dsd_exporter import AscetDatabaseScanner
-            scanner = AscetDatabaseScanner(version=args.version)
-            with contextlib.redirect_stdout(sys.stderr):
+            import tempfile
+            
+            try:
+                scanner = AscetDatabaseScanner(version=args.version)
+                
+                # Connect and scan
                 if not scanner.connect():
-                    _err("Failed to connect for DSD Export")
-                success = scanner.process_class(args.path)
+                    _err("Failed to connect to ASCET for DSD export")
+                
+                if not scanner.scan_database():
+                    _err("Failed to scan ASCET database")
+                
+                # Process the specified class
+                if not scanner.process_class(args.path):
+                    _err(f"Failed to process class: {args.path}")
+                
+                # Export to Excel
+                output_path = args.output or os.path.join(tempfile.gettempdir(), f"{os.path.basename(args.path)}_dsd_export.xlsx")
+                final_path = scanner.export_to_excel(output_path)
+                
                 scanner.disconnect()
-            if success:
-                _ok({"status": "success", "message": f"DSD successfully generated for {args.path}"})
-            else:
-                _err("DSD generation processing failed")
+                
+                _ok({
+                    "status": "success",
+                    "message": f"DSD export complete for {args.path}",
+                    "output_file": final_path,
+                    "class_path": args.path
+                })
+                
+            except Exception as e:
+                _err("DSD export failed", traceback.format_exc())
 
         elif args.command == "analyze_ai":
             from src.ai.agent import ASCETReviewSystem
-            reviewer = ASCETReviewSystem(mode=args.mode, version=args.version)
             
-            with contextlib.redirect_stdout(sys.stderr):
+            try:
+                reviewer = ASCETReviewSystem(mode=args.mode, version=args.version)
                 result = reviewer.run_analysis(target_path=args.path)
                 
-            if result and "error" not in result:
-                _ok({"status": "success", "findings": result.get("defects", []), "tokens": result.get("token_statistics", {})})
-            else:
-                _err(result.get("error", "AI Code Analysis failed"))
+                if result and "error" not in result:
+                    _ok({
+                        "status": "success",
+                        "target": args.path,
+                        "mode": args.mode,
+                        "defects": result.get("defects", []),
+                        "token_statistics": result.get("token_statistics", {}),
+                        "execution_time_seconds": result.get("execution_time_seconds", 0)
+                    })
+                else:
+                    _err(result.get("error", "AI Code Analysis failed"))
+            except Exception as e:
+                _err("AI Code Analysis failed", traceback.format_exc())
+
+        elif args.command == "get_system_prompt":
+            from src.config.prompts import get_system_prompt, list_available_prompts
+            
+            try:
+                prompt_text = get_system_prompt(args.type)
+                _ok({
+                    "type": args.type,
+                    "prompt": prompt_text,
+                    "available_types": list_available_prompts()
+                })
+            except Exception as e:
+                _err(f"Failed to get system prompt: {str(e)}")
+
+        elif args.command == "get_context":
+            from src.ascet.context_provider import get_context
+            
+            try:
+                context = get_context(args.path, args.version)
+                
+                # Add token estimate
+                from src.ascet.context_provider import ContextProvider
+                provider = ContextProvider(version=args.version)
+                token_estimate = provider.estimate_token_count(context)
+                context["estimated_tokens"] = token_estimate
+                
+                _ok({
+                    "status": "success",
+                    "context": context,
+                    "note": "Context gathered from available sources (code, diagram, metadata)"
+                })
+            except Exception as e:
+                _err(f"Failed to get context: {str(e)}", traceback.format_exc())
 
     except Exception as e:
         _err("Unexpected error occurred in execution loop", traceback.format_exc())
